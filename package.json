@@ -1,0 +1,13 @@
+{
+  "name": "readmeviewer",
+  "version": "1.0.0",
+  "description": "Lightweight markdown readme viewer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "marked": "^15.0.0"
+  }
+}
