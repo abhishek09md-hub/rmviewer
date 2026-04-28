@@ -839,9 +839,10 @@ async function loadFile(filePath, skipPush) {
 
   // Update browser URL
   if (!skipPush) {
-    var newUrl = '/' + encodeURIComponent(filePath.split('/').pop());
-    if (window.location.pathname !== newUrl) {
-      history.pushState({ file: filePath }, '', newUrl);
+    var newName = encodeURIComponent(filePath.split('/').pop());
+    var currentName = window.location.pathname.split('/').pop();
+    if (currentName !== newName) {
+      history.pushState({ file: filePath }, '', newName);
     }
   }
 
