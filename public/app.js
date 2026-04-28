@@ -99,8 +99,90 @@ async function renderMarkdown(targetEl, markdown) {
 let allFiles = [];
 let currentMarkdown = '';
 let currentFilePath = '';
-let translationCache = {};
-let showingTranslation = false;
+
+// File System Access API state
+let rootDirHandle = null;
+let fileHandles = new Map(); // relative path → FileSystemFileHandle
+let folderName = '';
+
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', '.cache', '.translated', '.next',
+  'dist', 'build', '.idea', '.vscode', '.svelte-kit', 'out',
+  '.turbo', 'coverage', '.nuxt', 'target'
+]);
+
+// ── IndexedDB persistence for directory handle ──
+
+const IDB_NAME = 'readmeViewer';
+const IDB_STORE = 'handles';
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    var req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = function () {
+      req.result.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+
+async function idbSet(key, value) {
+  var db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    var tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, key);
+    tx.oncomplete = resolve;
+    tx.onerror = function () { reject(tx.error); };
+  });
+}
+
+async function idbGet(key) {
+  var db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    var tx = db.transaction(IDB_STORE, 'readonly');
+    var req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+
+async function idbDel(key) {
+  var db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    var tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(key);
+    tx.oncomplete = resolve;
+    tx.onerror = function () { reject(tx.error); };
+  });
+}
+
+async function ensureReadPermission(handle) {
+  var opts = { mode: 'read' };
+  if ((await handle.queryPermission(opts)) === 'granted') return true;
+  if ((await handle.requestPermission(opts)) === 'granted') return true;
+  return false;
+}
+
+async function scanDirectory(dirHandle, base, files, handles) {
+  for await (const entry of dirHandle.values()) {
+    if (entry.kind === 'directory') {
+      if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+      await scanDirectory(entry, base ? base + '/' + entry.name : entry.name, files, handles);
+    } else if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.md')) {
+      var rel = base ? base + '/' + entry.name : entry.name;
+      files.push(rel);
+      handles.set(rel, entry);
+    }
+  }
+}
+
+async function readFileFromHandle(filePath) {
+  var handle = fileHandles.get(filePath);
+  if (!handle) throw new Error('File not in scanned set: ' + filePath);
+  var file = await handle.getFile();
+  return file.text();
+}
 
 // Resolve a .md filename from the URL path to a matching doc in allFiles
 function resolveFileFromUrl() {
@@ -129,19 +211,114 @@ window.addEventListener('popstate', function () {
 async function init() {
   initTheme();
   initSearch();
-  initTranslate();
   initProgress();
+  initScrollButtons();
+  initSidebarResize();
+  initSidebarToggle();
 
-  const res = await fetch('/api/files');
-  allFiles = await res.json();
+  document.getElementById('change-folder-btn').addEventListener('click', pickAndLoadFolder);
 
-  if (allFiles.length === 0) {
-    document.getElementById('markdown-body').innerHTML =
-      '<div class="empty-state"><p>No markdown files found in ./docs</p></div>';
+  if (!('showDirectoryPicker' in window)) {
+    showUnsupportedBrowser();
     return;
   }
 
-  document.getElementById('file-count').textContent = allFiles.length + ' file' + (allFiles.length !== 1 ? 's' : '');
+  // Try to restore previously picked folder
+  var saved = null;
+  try { saved = await idbGet('rootHandle'); } catch (e) { /* ignore */ }
+
+  if (saved) {
+    var ok = await ensureReadPermission(saved);
+    if (ok) {
+      await loadFolder(saved);
+      return;
+    }
+    // Permission denied — fall through to picker
+  }
+  showFolderPicker();
+}
+
+function showUnsupportedBrowser() {
+  var body = document.getElementById('markdown-body');
+  body.innerHTML =
+    '<div class="empty-state folder-picker-state">' +
+    '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>' +
+    '</svg>' +
+    '<p>Browser not supported</p>' +
+    '<span>This app needs the File System Access API. Please use Chrome, Edge, or Opera.</span>' +
+    '</div>';
+}
+
+function showFolderPicker(message) {
+  var body = document.getElementById('markdown-body');
+  body.innerHTML =
+    '<div class="empty-state folder-picker-state">' +
+    '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>' +
+    '</svg>' +
+    '<p>Choose a folder to browse</p>' +
+    '<span>' + (message || 'Pick any folder containing markdown files. Files stay on your device.') + '</span>' +
+    '<button id="pick-folder-btn" class="primary-btn">Choose Folder</button>' +
+    '</div>';
+  document.getElementById('pick-folder-btn').addEventListener('click', pickAndLoadFolder);
+}
+
+async function pickAndLoadFolder() {
+  try {
+    var handle = await window.showDirectoryPicker({ mode: 'read' });
+    try { await idbSet('rootHandle', handle); } catch (e) { /* not fatal */ }
+    // Reset per-folder UI state
+    localStorage.removeItem('lastFile');
+    localStorage.removeItem('recents');
+    await loadFolder(handle);
+  } catch (e) {
+    if (e && e.name === 'AbortError') return; // user cancelled
+    console.error(e);
+    showFolderPicker('Could not open folder: ' + (e && e.message || 'unknown error'));
+  }
+}
+
+async function loadFolder(handle) {
+  rootDirHandle = handle;
+  folderName = handle.name || 'folder';
+
+  var body = document.getElementById('markdown-body');
+  body.innerHTML = '<div class="empty-state"><p>Scanning ' + escapeHtml(folderName) + '…</p></div>';
+
+  var files = [];
+  var handles = new Map();
+  try {
+    await scanDirectory(handle, '', files, handles);
+  } catch (e) {
+    console.error(e);
+    showFolderPicker('Failed to scan folder: ' + (e && e.message || 'unknown'));
+    return;
+  }
+
+  files.sort();
+  allFiles = files;
+  fileHandles = handles;
+
+  var nav = document.getElementById('file-list');
+  nav.innerHTML = '';
+
+  if (allFiles.length === 0) {
+    body.innerHTML =
+      '<div class="empty-state folder-picker-state">' +
+      '<p>No markdown files found in <strong>' + escapeHtml(folderName) + '</strong></p>' +
+      '<button id="pick-folder-btn" class="primary-btn">Choose Different Folder</button>' +
+      '</div>';
+    document.getElementById('pick-folder-btn').addEventListener('click', pickAndLoadFolder);
+    document.getElementById('file-count').textContent = '0 files';
+    document.getElementById('change-folder-btn').classList.remove('hidden');
+    return;
+  }
+
+  document.getElementById('file-count').textContent =
+    allFiles.length + ' file' + (allFiles.length !== 1 ? 's' : '') + ' · ' + folderName;
+  document.getElementById('change-folder-btn').classList.remove('hidden');
+
   buildSidebar(allFiles);
   renderRecents();
 
@@ -156,10 +333,6 @@ async function init() {
       loadFile(allFiles[0]);
     }
   }
-
-  initScrollButtons();
-  initSidebarResize();
-  initSidebarToggle();
 }
 
 // ── Theme: dark mode toggle + accent picker ──
@@ -253,7 +426,7 @@ function updateBreadcrumb(filePath) {
   if (!filePath) { bc.innerHTML = ''; return; }
 
   var parts = filePath.split('/');
-  var html = '<span>docs</span>';
+  var html = '<span>' + escapeHtml(folderName || 'folder') + '</span>';
   for (var i = 0; i < parts.length; i++) {
     html += '<span class="breadcrumb-sep">/</span>';
     if (i === parts.length - 1) {
@@ -389,12 +562,38 @@ function resetFileFilter() {
   if (recentsSection) recentsSection.style.display = '';
 }
 
+var searchToken = 0;
+
 async function textSearch(query) {
   var container = document.getElementById('text-search-results');
+  var lowered = query.toLowerCase();
+  var token = ++searchToken;
+  var results = [];
 
   try {
-    var res = await fetch('/api/search?q=' + encodeURIComponent(query));
-    var results = await res.json();
+    for (var i = 0; i < allFiles.length; i++) {
+      if (token !== searchToken) return; // newer search superseded this one
+      var filePath = allFiles[i];
+      var content;
+      try {
+        content = await readFileFromHandle(filePath);
+      } catch (e) { continue; }
+
+      var lines = content.split('\n');
+      var matches = [];
+      for (var j = 0; j < lines.length; j++) {
+        if (lines[j].toLowerCase().indexOf(lowered) !== -1) {
+          matches.push({ line: j + 1, text: lines[j].trim().substring(0, 120) });
+          if (matches.length >= 3) break;
+        }
+      }
+      if (matches.length > 0) {
+        results.push({ path: filePath, matches: matches });
+        if (results.length >= 20) break;
+      }
+    }
+
+    if (token !== searchToken) return;
 
     if (results.length === 0) {
       container.innerHTML = '<div class="search-no-results">No matches found</div>';
@@ -418,13 +617,13 @@ async function textSearch(query) {
 
     container.innerHTML = html;
 
-    // Click to open file
     container.querySelectorAll('.search-result-item').forEach(el => {
       el.addEventListener('click', () => {
         loadFile(el.dataset.path);
       });
     });
   } catch (err) {
+    console.error(err);
     container.innerHTML = '<div class="search-no-results">Search failed</div>';
   }
 }
@@ -646,17 +845,18 @@ async function loadFile(filePath, skipPush) {
     }
   }
 
-  const res = await fetch('/api/file?path=' + encodeURIComponent(filePath));
-  if (!res.ok) {
+  let markdown;
+  try {
+    markdown = await readFileFromHandle(filePath);
+  } catch (e) {
     document.getElementById('markdown-body').innerHTML =
       '<div class="empty-state"><p>Error loading file</p></div>';
+    console.error(e);
     return;
   }
 
-  const markdown = await res.text();
   currentMarkdown = markdown;
   currentFilePath = filePath;
-  showingTranslation = false;
 
   localStorage.setItem('lastFile', filePath);
   addToRecents(filePath);
@@ -665,24 +865,6 @@ async function loadFile(filePath, skipPush) {
   const body = document.getElementById('markdown-body');
   const contentEl = document.querySelector('.content');
 
-  // Check if non-English and a cached translation exists on disk
-  var lang = detectNonEnglish(markdown);
-  if (lang) {
-    var cacheRes = await fetch('/api/translation?path=' + encodeURIComponent(filePath));
-    var cacheData = await cacheRes.json();
-    if (cacheData.cached) {
-      translationCache[filePath] = cacheData.translated;
-      await renderMarkdown(body, cacheData.translated);
-      showingTranslation = true;
-      updateTranslateBar(markdown, true);
-      body.style.animation = 'none';
-      body.offsetHeight;
-      body.style.animation = '';
-      contentEl.scrollTop = 0;
-      return;
-    }
-  }
-
   await renderMarkdown(body, markdown);
 
   body.style.animation = 'none';
@@ -690,195 +872,6 @@ async function loadFile(filePath, skipPush) {
   body.style.animation = '';
 
   contentEl.scrollTop = 0;
-  updateTranslateBar(markdown, false);
-}
-
-// ── Language detection & translation ──
-
-function detectNonEnglish(text) {
-  var clean = text
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`]*`/g, '')
-    .replace(/https?:\/\/\S+/g, '')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/<[^>]*>/g, '')
-    .replace(/[#*_|>\-=~`\[\](){}!\\\/\d\s.,;:'"?]+/g, ' ')
-    .trim();
-
-  if (clean.length < 20) return null;
-
-  var cjk = (clean.match(/[\u3000-\u9fff\uf900-\ufaff]/g) || []).length;
-  var cyrillic = (clean.match(/[\u0400-\u04ff]/g) || []).length;
-  var arabic = (clean.match(/[\u0600-\u06ff]/g) || []).length;
-  var devanagari = (clean.match(/[\u0900-\u097f]/g) || []).length;
-  var korean = (clean.match(/[\uac00-\ud7af\u1100-\u11ff]/g) || []).length;
-  var thai = (clean.match(/[\u0e00-\u0e7f]/g) || []).length;
-  var japanese = (clean.match(/[\u3040-\u309f\u30a0-\u30ff]/g) || []).length;
-
-  var total = clean.replace(/\s/g, '').length;
-  if (total === 0) return null;
-
-  if ((cjk + japanese) / total > 0.15) return japanese > cjk ? 'ja' : 'zh';
-  if (korean / total > 0.15) return 'ko';
-  if (cyrillic / total > 0.15) return 'ru';
-  if (arabic / total > 0.15) return 'ar';
-  if (devanagari / total > 0.15) return 'hi';
-  if (thai / total > 0.15) return 'th';
-
-  var accented = (clean.match(/[\u00c0-\u024f]/g) || []).length;
-  if (accented / total > 0.05) return 'autodetect';
-
-  return null;
-}
-
-var LANG_NAMES = {
-  'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean',
-  'ru': 'Russian', 'ar': 'Arabic', 'hi': 'Hindi',
-  'th': 'Thai', 'autodetect': 'Non-English'
-};
-
-function initTranslate() {
-  document.getElementById('translate-btn').addEventListener('click', handleTranslate);
-}
-
-function updateTranslateBar(markdown, showingCached) {
-  var bar = document.getElementById('translate-bar');
-  var btn = document.getElementById('translate-btn');
-  var langLabel = document.getElementById('detected-lang');
-
-  var lang = detectNonEnglish(markdown);
-  if (!lang) {
-    bar.classList.add('hidden');
-    return;
-  }
-
-  var langName = LANG_NAMES[lang] || 'Non-English';
-  langLabel.textContent = langName + ' content detected';
-
-  if (showingCached) {
-    btn.textContent = 'Show Original';
-    btn.disabled = false;
-  } else if (pendingTranslations[currentFilePath]) {
-    btn.textContent = 'Translating via Claude...';
-    btn.disabled = true;
-  } else if (translationCache[currentFilePath]) {
-    btn.textContent = 'Show English';
-    btn.disabled = false;
-  } else {
-    btn.textContent = 'Translate to English';
-    btn.disabled = false;
-  }
-
-  bar.classList.remove('hidden');
-}
-
-// Track in-flight translations: filePath -> Promise
-var pendingTranslations = {};
-
-async function handleTranslate() {
-  var btn = document.getElementById('translate-btn');
-  var body = document.getElementById('markdown-body');
-
-  // Toggle back to original
-  if (showingTranslation) {
-    await renderMarkdown(body, currentMarkdown);
-    btn.textContent = translationCache[currentFilePath] ? 'Show English' : 'Translate to English';
-    showingTranslation = false;
-    document.querySelector('.content').scrollTop = 0;
-    return;
-  }
-
-  // Show from cache
-  if (translationCache[currentFilePath]) {
-    await renderMarkdown(body, translationCache[currentFilePath]);
-    btn.textContent = 'Show Original';
-    showingTranslation = true;
-    document.querySelector('.content').scrollTop = 0;
-    return;
-  }
-
-  // Already translating this file in background
-  if (pendingTranslations[currentFilePath]) {
-    showToast('Translation already in progress...', 'info');
-    return;
-  }
-
-  // Start background translation
-  var translatingPath = currentFilePath;
-  btn.disabled = true;
-  btn.textContent = 'Translating via Claude...';
-
-  var fetchPromise = fetch('/api/translate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: translatingPath })
-  }).then(r => r.json());
-
-  pendingTranslations[translatingPath] = fetchPromise;
-
-  try {
-    var data = await fetchPromise;
-    delete pendingTranslations[translatingPath];
-
-    if (data.error) throw new Error(data.error);
-
-    translationCache[translatingPath] = data.translated;
-
-    // If user is still on the same file, render the translation
-    if (currentFilePath === translatingPath) {
-      await renderMarkdown(body, data.translated);
-      btn.textContent = 'Show Original';
-      btn.disabled = false;
-      showingTranslation = true;
-      document.querySelector('.content').scrollTop = 0;
-    } else {
-      // User navigated away — show a toast so they know it's done
-      var fileName = translatingPath.split('/').pop();
-      showToast('Translation ready: ' + fileName, 'success', () => {
-        loadFile(translatingPath);
-      });
-    }
-  } catch (err) {
-    delete pendingTranslations[translatingPath];
-    if (currentFilePath === translatingPath) {
-      btn.textContent = 'Translation failed — retry';
-      btn.disabled = false;
-    } else {
-      var fileName = translatingPath.split('/').pop();
-      showToast('Translation failed: ' + fileName, 'error');
-    }
-  }
-}
-
-// ── Toast notifications ──
-
-function showToast(message, type, onClick) {
-  var container = document.getElementById('toast-container');
-  var toast = document.createElement('div');
-  toast.className = 'toast ' + (type || 'info');
-
-  var icon = '';
-  if (type === 'success') icon = '<span class="toast-icon">&#10003;</span>';
-  else if (type === 'error') icon = '<span class="toast-icon">&#10007;</span>';
-  else icon = '<span class="toast-icon">&#8987;</span>';
-
-  toast.innerHTML = icon + '<span>' + message + '</span>';
-
-  if (onClick) {
-    toast.style.cursor = 'pointer';
-    toast.addEventListener('click', () => {
-      onClick();
-      toast.remove();
-    });
-  }
-
-  container.appendChild(toast);
-
-  // Auto-dismiss after 5s
-  setTimeout(() => {
-    toast.classList.add('fade-out');
-    setTimeout(() => toast.remove(), 300);
-  }, 5000);
 }
 
 // ── Handle link clicks inside rendered markdown ──

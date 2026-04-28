@@ -793,6 +793,36 @@ body {
   color: var(--text-muted);
   font-weight: 500;
   letter-spacing: 0.2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.change-folder-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.change-folder-btn:hover {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.change-folder-btn.hidden {
+  display: none;
 }
 
 /* ========== Content area ========== */
@@ -868,6 +898,43 @@ body {
 
 .empty-state span {
   font-size: 0.85rem;
+}
+
+.folder-picker-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder-picker-state svg {
+  opacity: 0.4;
+}
+
+.folder-picker-state span {
+  max-width: 360px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.primary-btn {
+  margin-top: 8px;
+  padding: 10px 22px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+
+.primary-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--accent-glow);
 }
 
 /* ========== Markdown body ========== */
@@ -1110,67 +1177,6 @@ body {
   color: var(--text-primary);
 }
 
-/* ========== Translate bar ========== */
-.translate-bar {
-  max-width: 860px;
-  margin: 0 auto 20px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 18px;
-  background: var(--accent-subtle);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-md);
-  font-size: 0.84rem;
-  transition: all var(--transition);
-  box-shadow: 0 2px 8px var(--accent-glow);
-}
-
-.translate-bar.hidden {
-  display: none;
-}
-
-.translate-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.translate-info svg {
-  flex-shrink: 0;
-}
-
-.translate-btn {
-  padding: 7px 16px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  font-family: inherit;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all var(--transition-fast);
-  letter-spacing: 0.2px;
-}
-
-.translate-btn:hover {
-  background: var(--accent-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.25);
-}
-
-.translate-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
 /* ========== Scroll buttons ========== */
 .scroll-buttons {
   position: fixed;
@@ -1213,64 +1219,6 @@ body {
   border-color: var(--accent);
   transform: translateY(-2px);
   box-shadow: var(--shadow-lg);
-}
-
-/* ========== Toast notifications ========== */
-.toast-container {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  pointer-events: none;
-}
-
-.toast {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-  padding: 10px 20px;
-  border-radius: var(--radius-md);
-  font-size: 0.82rem;
-  font-weight: 500;
-  box-shadow: var(--shadow-lg);
-  pointer-events: auto;
-  cursor: pointer;
-  animation: toastIn 0.3s ease;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 400px;
-}
-
-.toast.success {
-  border-color: var(--accent);
-}
-
-.toast.error {
-  border-color: #ef4444;
-}
-
-.toast-icon {
-  flex-shrink: 0;
-}
-
-.toast.fade-out {
-  animation: toastOut 0.3s ease forwards;
-}
-
-@keyframes toastIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes toastOut {
-  from { opacity: 1; transform: translateY(0); }
-  to { opacity: 0; transform: translateY(12px); }
 }
 
 /* ========== Custom tooltip (JS-driven) ========== */
