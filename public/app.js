@@ -157,11 +157,13 @@ async function idbDel(key) {
   });
 }
 
-async function ensureReadPermission(handle) {
-  var opts = { mode: 'read' };
-  if ((await handle.queryPermission(opts)) === 'granted') return true;
-  if ((await handle.requestPermission(opts)) === 'granted') return true;
-  return false;
+async function hasReadPermission(handle) {
+  return (await handle.queryPermission({ mode: 'read' })) === 'granted';
+}
+
+async function requestReadPermission(handle) {
+  // Must be called from a user-gesture handler (click, keypress).
+  return (await handle.requestPermission({ mode: 'read' })) === 'granted';
 }
 
 async function scanDirectory(dirHandle, base, files, handles) {
@@ -228,14 +230,43 @@ async function init() {
   try { saved = await idbGet('rootHandle'); } catch (e) { /* ignore */ }
 
   if (saved) {
-    var ok = await ensureReadPermission(saved);
-    if (ok) {
+    if (await hasReadPermission(saved)) {
       await loadFolder(saved);
       return;
     }
-    // Permission denied — fall through to picker
+    // Permission needs user gesture to re-grant — show reopen prompt.
+    showReopenPrompt(saved);
+    return;
   }
   showFolderPicker();
+}
+
+function showReopenPrompt(handle) {
+  var body = document.getElementById('markdown-body');
+  var name = handle.name || 'previous folder';
+  body.innerHTML =
+    '<div class="empty-state folder-picker-state">' +
+    '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>' +
+    '</svg>' +
+    '<p>Reopen <strong>' + escapeHtml(name) + '</strong>?</p>' +
+    '<span>Browsers require a click to re-grant access to a previously picked folder.</span>' +
+    '<button id="reopen-folder-btn" class="primary-btn">Reopen Folder</button>' +
+    '<button id="pick-different-btn" class="primary-btn" style="margin-top:8px;background:transparent;color:inherit;border:1px solid currentColor;">Choose Different Folder</button>' +
+    '</div>';
+  document.getElementById('reopen-folder-btn').addEventListener('click', async function () {
+    try {
+      if (await requestReadPermission(handle)) {
+        await loadFolder(handle);
+      } else {
+        showFolderPicker('Permission denied. Pick a folder to continue.');
+      }
+    } catch (e) {
+      console.error(e);
+      showFolderPicker('Could not reopen folder: ' + (e && e.message || 'unknown error'));
+    }
+  });
+  document.getElementById('pick-different-btn').addEventListener('click', pickAndLoadFolder);
 }
 
 function showUnsupportedBrowser() {
