@@ -105,6 +105,25 @@ let rootDirHandle = null;
 let fileHandles = new Map(); // relative path → FileSystemFileHandle
 let folderName = '';
 
+// Files opened via PWA file handler (kept for the current session)
+let openedFiles = new Map(); // file name → { handle, content }
+let pendingLaunchedFile = null;
+let onFileLaunched = null;
+
+// Register file-handler launch consumer as early as possible so we don't
+// miss a launch that fires before init() is reached.
+if ('launchQueue' in window) {
+  window.launchQueue.setConsumer((launchParams) => {
+    if (!launchParams || !launchParams.files || !launchParams.files.length) return;
+    var handle = launchParams.files[0];
+    if (onFileLaunched) {
+      onFileLaunched(handle);
+    } else {
+      pendingLaunchedFile = handle;
+    }
+  });
+}
+
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '.cache', '.translated', '.next',
   'dist', 'build', '.idea', '.vscode', '.svelte-kit', 'out',
@@ -225,20 +244,32 @@ async function init() {
     return;
   }
 
-  // Try to restore previously picked folder
+  // From here on, additional file-handler launches go straight to handleLaunchedFile.
+  onFileLaunched = handleLaunchedFile;
+
+  // Try to restore previously picked folder.
   var saved = null;
   try { saved = await idbGet('rootHandle'); } catch (e) { /* ignore */ }
 
-  if (saved) {
-    if (await hasReadPermission(saved)) {
-      await loadFolder(saved);
-      return;
-    }
-    // Permission needs user gesture to re-grant — show reopen prompt.
-    showReopenPrompt(saved);
+  var folderLoaded = false;
+  if (saved && await hasReadPermission(saved)) {
+    // If a file was launched too, suppress the folder's auto-open of lastFile —
+    // the launched file should win.
+    await loadFolder(saved, !!pendingLaunchedFile);
+    folderLoaded = true;
+  }
+
+  if (pendingLaunchedFile) {
+    var f = pendingLaunchedFile;
+    pendingLaunchedFile = null;
+    await handleLaunchedFile(f);
     return;
   }
-  showFolderPicker();
+
+  if (!folderLoaded) {
+    if (saved) showReopenPrompt(saved);
+    else showFolderPicker();
+  }
 }
 
 function showReopenPrompt(handle) {
@@ -310,7 +341,7 @@ async function pickAndLoadFolder() {
   }
 }
 
-async function loadFolder(handle) {
+async function loadFolder(handle, skipAutoLoad) {
   rootDirHandle = handle;
   folderName = handle.name || 'folder';
 
@@ -352,6 +383,9 @@ async function loadFolder(handle) {
 
   buildSidebar(allFiles);
   renderRecents();
+  renderOpenedFiles();
+
+  if (skipAutoLoad) return;
 
   var fileFromUrl = resolveFileFromUrl();
   if (fileFromUrl) {
@@ -364,6 +398,103 @@ async function loadFolder(handle) {
       loadFile(allFiles[0]);
     }
   }
+}
+
+// ── PWA file-handler launches (.md double-clicked from OS) ──
+
+async function handleLaunchedFile(fileHandle) {
+  var file, markdown;
+  try {
+    file = await fileHandle.getFile();
+    markdown = await file.text();
+  } catch (e) {
+    console.error('Could not read launched file', e);
+    return;
+  }
+
+  var name = file.name;
+
+  // If the loaded folder already contains a file with this name, navigate to it.
+  if (allFiles.length > 0) {
+    var match = allFiles.find(function (p) { return p.split('/').pop() === name; });
+    if (match) {
+      loadFile(match);
+      return;
+    }
+  }
+
+  // External file — track it in the "Opened" sidebar section.
+  openedFiles.set(name, { handle: fileHandle, content: markdown });
+  renderOpenedFiles();
+  await loadOpenedFile(name, markdown);
+}
+
+function renderOpenedFiles() {
+  var section = document.getElementById('opened-section');
+  var container = document.getElementById('opened-list');
+  if (!section || !container) return;
+
+  if (openedFiles.size === 0) {
+    section.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+
+  section.style.display = '';
+  container.innerHTML = '';
+  openedFiles.forEach(function (_entry, name) {
+    var link = document.createElement('a');
+    link.className = 'file-link opened-link';
+    if (name === currentFilePath) link.classList.add('active');
+    link.textContent = name;
+    link.dataset.tooltip = name;
+    link.dataset.path = name;
+    link.addEventListener('click', function () { loadOpenedFile(name); });
+    container.appendChild(link);
+  });
+}
+
+async function loadOpenedFile(name, prefetchedContent) {
+  var entry = openedFiles.get(name);
+  if (!entry) return;
+
+  var markdown = prefetchedContent;
+  if (markdown == null) {
+    try {
+      var f = await entry.handle.getFile();
+      markdown = await f.text();
+      entry.content = markdown;
+    } catch (e) {
+      console.error('Could not read opened file', e);
+      return;
+    }
+  }
+
+  // Clear active state on folder tree + recents, then mark this opened link.
+  document.querySelectorAll('#file-list .file-link').forEach(function (el) {
+    el.classList.remove('active');
+  });
+  document.querySelectorAll('.recent-link').forEach(function (el) {
+    el.classList.remove('active');
+  });
+  document.querySelectorAll('.opened-link').forEach(function (el) {
+    el.classList.toggle('active', el.dataset.path === name);
+  });
+
+  currentMarkdown = markdown;
+  currentFilePath = name;
+
+  var bc = document.getElementById('breadcrumb');
+  bc.innerHTML = '<span class="breadcrumb-current">' + escapeHtml(name) + '</span>';
+
+  var body = document.getElementById('markdown-body');
+  await renderMarkdown(body, markdown);
+
+  body.style.animation = 'none';
+  body.offsetHeight;
+  body.style.animation = '';
+
+  document.querySelector('.content').scrollTop = 0;
 }
 
 // ── Theme: dark mode toggle + accent picker ──
