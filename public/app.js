@@ -414,13 +414,25 @@ async function handleLaunchedFile(fileHandle) {
 
   var name = file.name;
 
-  // If the loaded folder already contains a file with this name, navigate to it.
-  if (allFiles.length > 0) {
-    var match = allFiles.find(function (p) { return p.split('/').pop() === name; });
-    if (match) {
-      loadFile(match);
-      return;
-    }
+  // If the launched file is the *same entry* as one in the loaded folder,
+  // just navigate to it — no need to surface it under "Opened".
+  // Filter by filename first to keep isSameEntry calls bounded.
+  for (var i = 0; i < allFiles.length; i++) {
+    var path = allFiles[i];
+    if (path.split('/').pop() !== name) continue;
+    var handle = fileHandles.get(path);
+    if (!handle) continue;
+    try {
+      if (await handle.isSameEntry(fileHandle)) {
+        // If we previously tracked this file as external, drop it.
+        if (openedFiles.has(name)) {
+          openedFiles.delete(name);
+          renderOpenedFiles();
+        }
+        loadFile(path);
+        return;
+      }
+    } catch (e) { /* isSameEntry can throw on detached handles — fall through */ }
   }
 
   // External file — track it in the "Opened" sidebar section.
