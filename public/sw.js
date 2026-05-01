@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v5';
 const CACHE_NAME = 'readme-viewer-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [

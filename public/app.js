@@ -455,14 +455,15 @@ function renderOpenedFiles() {
   section.style.display = '';
   container.innerHTML = '';
   openedFiles.forEach(function (_entry, name) {
-    var link = document.createElement('a');
-    link.className = 'file-link opened-link';
-    if (name === currentFilePath) link.classList.add('active');
-    link.textContent = name;
-    link.dataset.tooltip = name;
-    link.dataset.path = name;
-    link.addEventListener('click', function () { loadOpenedFile(name); });
-    container.appendChild(link);
+    var extra = 'opened-link' + (name === currentFilePath ? ' active' : '');
+    var row = buildFileRow({
+      extraLinkClass: extra,
+      name: name,
+      dataPath: name,
+      copyPath: name,
+      onClick: function () { loadOpenedFile(name); }
+    });
+    container.appendChild(row);
   });
 }
 
@@ -843,14 +844,15 @@ function renderRecents() {
   recents.forEach(filePath => {
     var parts = filePath.split('/');
     var name = parts[parts.length - 1];
-    var link = document.createElement('a');
-    link.className = 'file-link recent-link';
-    if (filePath === currentFilePath) link.classList.add('active');
-    link.textContent = name;
-    link.dataset.tooltip = name;
-    link.dataset.path = filePath;
-    link.addEventListener('click', () => loadFile(filePath));
-    container.appendChild(link);
+    var extra = 'recent-link' + (filePath === currentFilePath ? ' active' : '');
+    var row = buildFileRow({
+      extraLinkClass: extra,
+      name: name,
+      dataPath: filePath,
+      copyPath: getCopyPathForFolderFile(filePath),
+      onClick: function () { loadFile(filePath); }
+    });
+    container.appendChild(row);
   });
 }
 
@@ -983,13 +985,154 @@ function createDirNode(name, node, fullPath, collapsed) {
 }
 
 function createFileLink(file) {
+  return buildFileRow({
+    name: file.name,
+    dataPath: file.path,
+    copyPath: getCopyPathForFolderFile(file.path),
+    onClick: function () { loadFile(file.path); }
+  });
+}
+
+function getCopyPathForFolderFile(relativePath) {
+  return folderName ? folderName + '/' + relativePath : relativePath;
+}
+
+function buildFileRow(opts) {
+  var row = document.createElement('div');
+  row.className = 'file-row';
+
   var link = document.createElement('a');
-  link.className = 'file-link';
-  link.textContent = file.name;
-  link.dataset.tooltip = file.name;
-  link.dataset.path = file.path;
-  link.addEventListener('click', () => loadFile(file.path));
-  return link;
+  link.className = 'file-link' + (opts.extraLinkClass ? ' ' + opts.extraLinkClass : '');
+  link.textContent = opts.name;
+  link.dataset.tooltip = opts.name;
+  link.dataset.path = opts.dataPath;
+  link.addEventListener('click', opts.onClick);
+
+  var more = document.createElement('button');
+  more.className = 'file-more';
+  more.type = 'button';
+  more.setAttribute('aria-label', 'More options');
+  more.innerHTML =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">' +
+      '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>' +
+    '</svg>';
+  more.addEventListener('click', function (e) {
+    e.stopPropagation();
+    showFileMenu(more, opts.copyPath);
+  });
+
+  row.appendChild(link);
+  row.appendChild(more);
+  return row;
+}
+
+// ── File row "more" menu ──
+
+var openMenuButton = null;
+var menuOutsideClickHandler = null;
+
+function showFileMenu(button, copyPath) {
+  closeFileMenu();
+
+  var menu = document.createElement('div');
+  menu.className = 'file-menu';
+  menu.innerHTML =
+    '<button class="file-menu-item" type="button" data-action="copy-path">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
+        '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
+      '</svg>' +
+      '<span>Copy path</span>' +
+    '</button>';
+
+  document.body.appendChild(menu);
+
+  // Position: below the button, right-aligned, clamped to viewport.
+  var btnRect = button.getBoundingClientRect();
+  var menuRect = menu.getBoundingClientRect();
+  var top = btnRect.bottom + 4;
+  var left = btnRect.right - menuRect.width;
+  if (left < 8) left = 8;
+  if (top + menuRect.height > window.innerHeight - 8) {
+    top = btnRect.top - menuRect.height - 4;
+  }
+  menu.style.top = top + 'px';
+  menu.style.left = left + 'px';
+
+  button.classList.add('open');
+  openMenuButton = button;
+
+  menu.addEventListener('click', function (e) {
+    var item = e.target.closest('.file-menu-item');
+    if (!item) return;
+    e.stopPropagation();
+    if (item.dataset.action === 'copy-path') {
+      copyToClipboard(copyPath, 'Path copied');
+    }
+    closeFileMenu();
+  });
+
+  setTimeout(function () {
+    menuOutsideClickHandler = function () { closeFileMenu(); };
+    document.addEventListener('click', menuOutsideClickHandler);
+    document.addEventListener('keydown', menuEscapeHandler);
+    var sb = document.querySelector('.sidebar');
+    if (sb) sb.addEventListener('scroll', closeFileMenu, { once: true });
+  }, 0);
+}
+
+function menuEscapeHandler(e) {
+  if (e.key === 'Escape') closeFileMenu();
+}
+
+function closeFileMenu() {
+  document.querySelectorAll('.file-menu').forEach(function (m) { m.remove(); });
+  if (openMenuButton) {
+    openMenuButton.classList.remove('open');
+    openMenuButton = null;
+  }
+  if (menuOutsideClickHandler) {
+    document.removeEventListener('click', menuOutsideClickHandler);
+    menuOutsideClickHandler = null;
+  }
+  document.removeEventListener('keydown', menuEscapeHandler);
+}
+
+async function copyToClipboard(text, toastMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(toastMsg || 'Copied');
+  } catch (e) {
+    console.error('Copy failed', e);
+    // Fallback for older browsers / permission denial
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      showToast(toastMsg || 'Copied');
+    } catch (e2) {
+      showToast('Copy failed');
+    }
+  }
+}
+
+function showToast(text) {
+  var existing = document.querySelector('.copy-toast');
+  if (existing) existing.remove();
+  var toast = document.createElement('div');
+  toast.className = 'copy-toast';
+  toast.textContent = text;
+  document.body.appendChild(toast);
+  requestAnimationFrame(function () { toast.classList.add('visible'); });
+  setTimeout(function () {
+    toast.classList.remove('visible');
+    setTimeout(function () { toast.remove(); }, 220);
+  }, 1600);
 }
 
 function countFiles(node) {

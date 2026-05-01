@@ -1326,6 +1326,110 @@ body {
   }
 }
 
+/* ========== File row + "more" menu ========== */
+.file-row {
+  position: relative;
+  display: block;
+}
+
+.file-row .file-link {
+  padding-right: 32px;
+}
+
+.file-more {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.55;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+  z-index: 1;
+}
+
+.file-row:hover .file-more,
+.file-more.open,
+.file-more:focus-visible {
+  opacity: 1;
+}
+
+.file-more:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.file-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  min-width: 160px;
+  animation: dropIn 0.12s ease;
+}
+
+.file-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.file-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.file-menu-item svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.copy-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 9999;
+}
+
+.copy-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* ========== Selection ========== */
 ::selection {
   background: var(--accent-subtle);
