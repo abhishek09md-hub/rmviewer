@@ -1319,9 +1319,45 @@ body {
   font-size: 0.74rem;
 }
 
+/* TOC toggle button (in content topbar) */
+.toc-toggle {
+  position: absolute;
+  right: 0;
+  top: 12px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.toc-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.toc-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.toc-toggle.hidden {
+  display: none;
+}
+
 /* Hide TOC on narrow screens */
 @media (max-width: 1100px) {
   .toc {
+    display: none !important;
+  }
+  .toc-toggle {
     display: none !important;
   }
 }

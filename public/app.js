@@ -236,6 +236,7 @@ async function init() {
   initScrollButtons();
   initSidebarResize();
   initSidebarToggle();
+  initTocToggle();
 
   document.getElementById('change-folder-btn').addEventListener('click', pickAndLoadFolder);
 
@@ -1362,12 +1363,17 @@ function initSidebarToggle() {
 function buildToc(articleEl) {
   var toc = document.getElementById('toc');
   var tocList = document.getElementById('toc-list');
+  var toggle = document.getElementById('toc-toggle');
   var headings = articleEl.querySelectorAll('h2, h3');
 
   tocList.innerHTML = '';
 
   if (headings.length < 2) {
     toc.classList.remove('visible');
+    if (toggle) {
+      toggle.classList.add('hidden');
+      toggle.classList.remove('active');
+    }
     return;
   }
 
@@ -1389,8 +1395,36 @@ function buildToc(articleEl) {
     tocList.appendChild(li);
   });
 
-  toc.classList.add('visible');
-  initTocScrollSpy();
+  if (toggle) toggle.classList.remove('hidden');
+
+  var userHidden = localStorage.getItem('tocHidden') === 'true';
+  if (userHidden) {
+    toc.classList.remove('visible');
+    if (toggle) toggle.classList.remove('active');
+  } else {
+    toc.classList.add('visible');
+    if (toggle) toggle.classList.add('active');
+    initTocScrollSpy();
+  }
+}
+
+function initTocToggle() {
+  var toggle = document.getElementById('toc-toggle');
+  if (!toggle) return;
+  toggle.addEventListener('click', function () {
+    var toc = document.getElementById('toc');
+    if (toc.classList.contains('visible')) {
+      toc.classList.remove('visible');
+      toggle.classList.remove('active');
+      localStorage.setItem('tocHidden', 'true');
+    } else {
+      if (document.querySelectorAll('.toc-link').length === 0) return;
+      toc.classList.add('visible');
+      toggle.classList.add('active');
+      localStorage.removeItem('tocHidden');
+      initTocScrollSpy();
+    }
+  });
 }
 
 var tocSpyCleanup = null;
