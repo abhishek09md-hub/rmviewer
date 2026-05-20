@@ -86,7 +86,7 @@ async function reRenderMermaid() {
 }
 
 async function renderMarkdown(targetEl, markdown) {
-  targetEl.innerHTML = marked.parse(markdown);
+  targetEl.innerHTML = renderTokensToHtml(markdown);
   // Render any mermaid diagrams
   var mermaidEls = targetEl.querySelectorAll('pre.mermaid');
   if (mermaidEls.length > 0) {
@@ -94,6 +94,38 @@ async function renderMarkdown(targetEl, markdown) {
     await mermaid.run({ nodes: mermaidEls });
   }
   buildToc(targetEl);
+}
+
+// Tokenize markdown and wrap each non-space top-level block in a div
+// that knows its source byte range — needed for in-place editing.
+function renderTokensToHtml(markdown) {
+  var tokens;
+  try {
+    tokens = marked.lexer(markdown);
+  } catch (e) {
+    return marked.parse(markdown);
+  }
+  var offset = 0;
+  var html = '';
+  for (var i = 0; i < tokens.length; i++) {
+    var token = tokens[i];
+    var len = token.raw ? token.raw.length : 0;
+    if (token.type === 'space') {
+      offset += len;
+      continue;
+    }
+    var subArr = [token];
+    subArr.links = tokens.links || {};
+    var blockHtml;
+    try {
+      blockHtml = marked.parser(subArr);
+    } catch (e) {
+      blockHtml = '<p>' + escapeHtml(token.raw || '') + '</p>';
+    }
+    html += '<div class="md-block" data-block-start="' + offset + '" data-block-len="' + len + '">' + blockHtml + '</div>';
+    offset += len;
+  }
+  return html;
 }
 
 let allFiles = [];
@@ -1192,6 +1224,176 @@ async function loadFile(filePath, skipPush) {
 
   contentEl.scrollTop = 0;
 }
+
+// ── Inline block editing (double-click to edit raw markdown) ──
+
+var currentEditor = null;
+
+function isEditableFile() {
+  // Folder file: need rootDirHandle + currentFilePath in fileHandles.
+  if (rootDirHandle && fileHandles.has(currentFilePath)) return true;
+  // Externally opened file: need handle in openedFiles.
+  if (openedFiles.has(currentFilePath)) return true;
+  return false;
+}
+
+async function ensureWritePermission(handle) {
+  try {
+    if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') return true;
+    return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
+  } catch (e) {
+    return false;
+  }
+}
+
+async function writeToHandle(handle, content) {
+  var writable = await handle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+async function saveCurrentFile() {
+  if (rootDirHandle && fileHandles.has(currentFilePath)) {
+    if (!(await ensureWritePermission(rootDirHandle))) throw new Error('Write permission denied');
+    await writeToHandle(fileHandles.get(currentFilePath), currentMarkdown);
+    return;
+  }
+  if (openedFiles.has(currentFilePath)) {
+    var entry = openedFiles.get(currentFilePath);
+    if (!(await ensureWritePermission(entry.handle))) throw new Error('Write permission denied');
+    await writeToHandle(entry.handle, currentMarkdown);
+    entry.content = currentMarkdown;
+    return;
+  }
+  throw new Error('No writable handle for current file');
+}
+
+function autoSizeTextarea(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = (ta.scrollHeight + 2) + 'px';
+}
+
+function enterEditMode(blockEl) {
+  if (!isEditableFile()) {
+    showToast('Pick a folder first to edit');
+    return;
+  }
+  if (currentEditor) {
+    // Commit any open editor before starting a new one.
+    commitEdit(currentEditor.textarea, currentEditor.blockEl);
+  }
+
+  var start = parseInt(blockEl.dataset.blockStart, 10);
+  var len = parseInt(blockEl.dataset.blockLen, 10);
+  if (isNaN(start) || isNaN(len)) return;
+
+  var srcText = currentMarkdown.slice(start, start + len);
+  // Trim trailing newlines for a cleaner edit surface (we re-add on commit).
+  var trimmed = srcText.replace(/\n+$/, '');
+
+  var textarea = document.createElement('textarea');
+  textarea.className = 'md-editor';
+  textarea.value = trimmed;
+  textarea.spellcheck = false;
+  textarea.dataset.blockStart = start;
+  textarea.dataset.blockLen = len;
+  textarea.dataset.original = trimmed;
+
+  blockEl.classList.add('editing');
+  blockEl.style.display = 'none';
+  blockEl.insertAdjacentElement('afterend', textarea);
+
+  // Sizing
+  autoSizeTextarea(textarea);
+  textarea.addEventListener('input', function () { autoSizeTextarea(textarea); });
+
+  // Place cursor at end on focus (predictable)
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+  textarea.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEdit(textarea, blockEl);
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      commitEdit(textarea, blockEl);
+    }
+  });
+
+  textarea.addEventListener('blur', function () {
+    // Wait a tick so a programmatic remove doesn't double-commit.
+    setTimeout(function () {
+      if (textarea.parentNode && currentEditor && currentEditor.textarea === textarea) {
+        commitEdit(textarea, blockEl);
+      }
+    }, 0);
+  });
+
+  currentEditor = { textarea: textarea, blockEl: blockEl };
+}
+
+function cancelEdit(textarea, blockEl) {
+  if (currentEditor && currentEditor.textarea === textarea) currentEditor = null;
+  textarea.remove();
+  if (blockEl) {
+    blockEl.style.display = '';
+    blockEl.classList.remove('editing');
+  }
+}
+
+async function commitEdit(textarea, blockEl) {
+  if (currentEditor && currentEditor.textarea === textarea) currentEditor = null;
+
+  var start = parseInt(textarea.dataset.blockStart, 10);
+  var len = parseInt(textarea.dataset.blockLen, 10);
+  var original = textarea.dataset.original;
+  var newText = textarea.value;
+
+  textarea.remove();
+  if (blockEl) {
+    blockEl.style.display = '';
+    blockEl.classList.remove('editing');
+  }
+
+  if (newText === original) return; // no change → skip save + re-render
+
+  // Re-add the trailing newline we trimmed when opening the editor, so the
+  // block boundary stays intact in the source.
+  var replacement = newText.endsWith('\n') ? newText : newText + '\n';
+  var newMarkdown = currentMarkdown.slice(0, start) + replacement + currentMarkdown.slice(start + len);
+  var prevMarkdown = currentMarkdown;
+  currentMarkdown = newMarkdown;
+
+  try {
+    await saveCurrentFile();
+  } catch (e) {
+    console.error(e);
+    currentMarkdown = prevMarkdown; // roll back in-memory
+    showToast('Save failed');
+    return;
+  }
+
+  // Re-render while preserving scroll position.
+  var contentEl = document.querySelector('.content');
+  var scrollTop = contentEl.scrollTop;
+  var body = document.getElementById('markdown-body');
+  await renderMarkdown(body, currentMarkdown);
+  contentEl.scrollTop = scrollTop;
+
+  showToast('Saved');
+}
+
+document.getElementById('markdown-body').addEventListener('dblclick', function (e) {
+  if (e.target.closest('a')) return; // let users click links normally
+  if (e.target.closest('.md-editor')) return;
+  var blockEl = e.target.closest('.md-block');
+  if (!blockEl) return;
+  e.preventDefault();
+  var sel = window.getSelection();
+  if (sel) sel.removeAllRanges();
+  enterEditMode(blockEl);
+});
 
 // ── Handle link clicks inside rendered markdown ──
 
