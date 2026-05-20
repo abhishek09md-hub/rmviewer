@@ -1273,15 +1273,20 @@ function autoSizeTextarea(ta) {
   ta.style.height = (ta.scrollHeight + 2) + 'px';
 }
 
+function closeCurrentEditor() {
+  if (currentEditor && currentEditor.commit) {
+    var ed = currentEditor;
+    currentEditor = null;
+    ed.commit();
+  }
+}
+
 function enterEditMode(blockEl) {
   if (!isEditableFile()) {
     showToast('Pick a folder first to edit');
     return;
   }
-  if (currentEditor) {
-    // Commit any open editor before starting a new one.
-    commitEdit(currentEditor.textarea, currentEditor.blockEl);
-  }
+  closeCurrentEditor();
 
   var start = parseInt(blockEl.dataset.blockStart, 10);
   var len = parseInt(blockEl.dataset.blockLen, 10);
@@ -1295,103 +1300,252 @@ function enterEditMode(blockEl) {
   textarea.className = 'md-editor';
   textarea.value = trimmed;
   textarea.spellcheck = false;
-  textarea.dataset.blockStart = start;
-  textarea.dataset.blockLen = len;
-  textarea.dataset.original = trimmed;
 
   blockEl.classList.add('editing');
   blockEl.style.display = 'none';
   blockEl.insertAdjacentElement('afterend', textarea);
 
-  // Sizing
   autoSizeTextarea(textarea);
   textarea.addEventListener('input', function () { autoSizeTextarea(textarea); });
-
-  // Place cursor at end on focus (predictable)
   textarea.focus();
   textarea.setSelectionRange(textarea.value.length, textarea.value.length);
 
-  textarea.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      cancelEdit(textarea, blockEl);
-    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      commitEdit(textarea, blockEl);
-    }
-  });
+  var committed = false;
 
+  async function commit() {
+    if (committed) return;
+    committed = true;
+    if (currentEditor && currentEditor.textarea === textarea) currentEditor = null;
+
+    var newText = textarea.value;
+    textarea.remove();
+    blockEl.style.display = '';
+    blockEl.classList.remove('editing');
+
+    if (newText === trimmed) return;
+
+    var replacement = newText.endsWith('\n') ? newText : newText + '\n';
+    var newMarkdown = currentMarkdown.slice(0, start) + replacement + currentMarkdown.slice(start + len);
+    var prevMarkdown = currentMarkdown;
+    currentMarkdown = newMarkdown;
+
+    try {
+      await saveCurrentFile();
+    } catch (e) {
+      console.error(e);
+      currentMarkdown = prevMarkdown;
+      showToast('Save failed');
+      return;
+    }
+
+    var contentEl = document.querySelector('.content');
+    var scrollTop = contentEl.scrollTop;
+    var body = document.getElementById('markdown-body');
+    await renderMarkdown(body, currentMarkdown);
+    contentEl.scrollTop = scrollTop;
+    showToast('Saved');
+  }
+
+  function cancel() {
+    if (committed) return;
+    committed = true;
+    if (currentEditor && currentEditor.textarea === textarea) currentEditor = null;
+    textarea.remove();
+    blockEl.style.display = '';
+    blockEl.classList.remove('editing');
+  }
+
+  textarea.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); commit(); }
+  });
   textarea.addEventListener('blur', function () {
-    // Wait a tick so a programmatic remove doesn't double-commit.
     setTimeout(function () {
-      if (textarea.parentNode && currentEditor && currentEditor.textarea === textarea) {
-        commitEdit(textarea, blockEl);
-      }
+      if (!committed && textarea.parentNode) commit();
     }, 0);
   });
 
-  currentEditor = { textarea: textarea, blockEl: blockEl };
+  currentEditor = { textarea: textarea, commit: commit, cancel: cancel };
 }
 
-function cancelEdit(textarea, blockEl) {
-  if (currentEditor && currentEditor.textarea === textarea) currentEditor = null;
-  textarea.remove();
-  if (blockEl) {
-    blockEl.style.display = '';
-    blockEl.classList.remove('editing');
+// ── Table cell editing (more granular than block editing) ──
+
+function splitTableLine(line) {
+  var cells = [];
+  var current = '';
+  for (var i = 0; i < line.length; i++) {
+    if (line[i] === '\\' && line[i + 1] === '|') {
+      current += '\\|';
+      i++;
+    } else if (line[i] === '|') {
+      cells.push(current);
+      current = '';
+    } else {
+      current += line[i];
+    }
   }
+  cells.push(current);
+  return cells;
 }
 
-async function commitEdit(textarea, blockEl) {
-  if (currentEditor && currentEditor.textarea === textarea) currentEditor = null;
+function cellDataIndex(cells, colIndex) {
+  // GFM tables usually have leading + trailing pipes which split() emits as
+  // empty first/last cells; adjust for the case where they're missing.
+  var hasLeading = cells.length > 0 && cells[0].trim() === '';
+  return (hasLeading ? 1 : 0) + colIndex;
+}
 
-  var start = parseInt(textarea.dataset.blockStart, 10);
-  var len = parseInt(textarea.dataset.blockLen, 10);
-  var original = textarea.dataset.original;
-  var newText = textarea.value;
-
-  textarea.remove();
-  if (blockEl) {
-    blockEl.style.display = '';
-    blockEl.classList.remove('editing');
+function getCellPositionInSource(cellEl) {
+  var rowEl = cellEl.parentElement;
+  if (!rowEl) return null;
+  var colIndex = Array.from(rowEl.children).indexOf(cellEl);
+  if (cellEl.closest('thead')) {
+    return { sourceLineIndex: 0, colIndex: colIndex };
   }
+  var tbody = cellEl.closest('tbody');
+  if (!tbody) return null;
+  var tbodyRowIndex = Array.from(tbody.children).indexOf(rowEl);
+  // header line = 0, separator line = 1, body rows start at line 2
+  return { sourceLineIndex: 2 + tbodyRowIndex, colIndex: colIndex };
+}
 
-  if (newText === original) return; // no change → skip save + re-render
+function getTableCellRaw(tableRaw, sourceLineIndex, colIndex) {
+  var lines = tableRaw.split('\n');
+  if (sourceLineIndex >= lines.length) return '';
+  var cells = splitTableLine(lines[sourceLineIndex]);
+  var idx = cellDataIndex(cells, colIndex);
+  if (idx >= cells.length) return '';
+  // Unescape pipes for display so the user sees a literal | rather than \|
+  return cells[idx].trim().replace(/\\\|/g, '|');
+}
 
-  // Re-add the trailing newline we trimmed when opening the editor, so the
-  // block boundary stays intact in the source.
-  var replacement = newText.endsWith('\n') ? newText : newText + '\n';
-  var newMarkdown = currentMarkdown.slice(0, start) + replacement + currentMarkdown.slice(start + len);
-  var prevMarkdown = currentMarkdown;
-  currentMarkdown = newMarkdown;
+function setTableCellRaw(tableRaw, sourceLineIndex, colIndex, newText) {
+  var lines = tableRaw.split('\n');
+  if (sourceLineIndex >= lines.length) return tableRaw;
+  var cells = splitTableLine(lines[sourceLineIndex]);
+  var idx = cellDataIndex(cells, colIndex);
+  if (idx >= cells.length) return tableRaw;
+  // Escape unescaped pipes so the user can type literal |
+  var escaped = newText.trim().replace(/\\\|/g, '\\|').replace(/(^|[^\\])\|/g, '$1\\|');
+  cells[idx] = ' ' + escaped + ' ';
+  lines[sourceLineIndex] = cells.join('|');
+  return lines.join('\n');
+}
 
-  try {
-    await saveCurrentFile();
-  } catch (e) {
-    console.error(e);
-    currentMarkdown = prevMarkdown; // roll back in-memory
-    showToast('Save failed');
+function enterCellEditMode(cellEl, blockEl) {
+  if (!isEditableFile()) {
+    showToast('Pick a folder first to edit');
     return;
   }
+  closeCurrentEditor();
 
-  // Re-render while preserving scroll position.
-  var contentEl = document.querySelector('.content');
-  var scrollTop = contentEl.scrollTop;
-  var body = document.getElementById('markdown-body');
-  await renderMarkdown(body, currentMarkdown);
-  contentEl.scrollTop = scrollTop;
+  var sourceStart = parseInt(blockEl.dataset.blockStart, 10);
+  var sourceLen = parseInt(blockEl.dataset.blockLen, 10);
+  if (isNaN(sourceStart) || isNaN(sourceLen)) return;
 
-  showToast('Saved');
+  var tableRaw = currentMarkdown.slice(sourceStart, sourceStart + sourceLen);
+  var pos = getCellPositionInSource(cellEl);
+  if (!pos) return;
+
+  var rawText = getTableCellRaw(tableRaw, pos.sourceLineIndex, pos.colIndex);
+  var originalHtml = cellEl.innerHTML;
+  var committed = false;
+
+  cellEl.innerHTML = '';
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'md-cell-editor';
+  input.value = rawText;
+  input.spellcheck = false;
+  cellEl.appendChild(input);
+  cellEl.classList.add('editing');
+  input.focus();
+  input.select();
+
+  async function commit() {
+    if (committed) return;
+    committed = true;
+    if (currentEditor && currentEditor.cellEl === cellEl) currentEditor = null;
+    cellEl.classList.remove('editing');
+
+    var newText = input.value;
+    if (newText === rawText) {
+      cellEl.innerHTML = originalHtml;
+      return;
+    }
+
+    var newTableRaw = setTableCellRaw(tableRaw, pos.sourceLineIndex, pos.colIndex, newText);
+    if (newTableRaw === tableRaw) {
+      cellEl.innerHTML = originalHtml;
+      return;
+    }
+
+    var prevMarkdown = currentMarkdown;
+    currentMarkdown =
+      currentMarkdown.slice(0, sourceStart) +
+      newTableRaw +
+      currentMarkdown.slice(sourceStart + sourceLen);
+
+    try {
+      await saveCurrentFile();
+    } catch (e) {
+      console.error(e);
+      currentMarkdown = prevMarkdown;
+      cellEl.innerHTML = originalHtml;
+      showToast('Save failed');
+      return;
+    }
+
+    var contentEl = document.querySelector('.content');
+    var scrollTop = contentEl.scrollTop;
+    var body = document.getElementById('markdown-body');
+    await renderMarkdown(body, currentMarkdown);
+    contentEl.scrollTop = scrollTop;
+    showToast('Saved');
+  }
+
+  function cancel() {
+    if (committed) return;
+    committed = true;
+    if (currentEditor && currentEditor.cellEl === cellEl) currentEditor = null;
+    cellEl.innerHTML = originalHtml;
+    cellEl.classList.remove('editing');
+  }
+
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    else if (e.key === 'Enter') { e.preventDefault(); commit(); }
+  });
+  input.addEventListener('blur', function () {
+    setTimeout(function () {
+      if (!committed && cellEl.contains(input)) commit();
+    }, 0);
+  });
+
+  currentEditor = { cellEl: cellEl, commit: commit, cancel: cancel };
 }
 
 document.getElementById('markdown-body').addEventListener('dblclick', function (e) {
   if (e.target.closest('a')) return; // let users click links normally
   if (e.target.closest('.md-editor')) return;
+  if (e.target.closest('.md-cell-editor')) return;
+
   var blockEl = e.target.closest('.md-block');
   if (!blockEl) return;
+
   e.preventDefault();
   var sel = window.getSelection();
   if (sel) sel.removeAllRanges();
+
+  // Tables: only edit the specific cell that was clicked, not the whole block.
+  if (blockEl.querySelector('table')) {
+    var cellEl = e.target.closest('th, td');
+    if (cellEl && blockEl.contains(cellEl)) {
+      enterCellEditMode(cellEl, blockEl);
+    }
+    return;
+  }
+
   enterEditMode(blockEl);
 });
 
