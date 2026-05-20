@@ -1452,13 +1452,15 @@ function enterCellEditMode(cellEl, blockEl) {
   var committed = false;
 
   cellEl.innerHTML = '';
-  var input = document.createElement('input');
-  input.type = 'text';
+  var input = document.createElement('textarea');
   input.className = 'md-cell-editor';
   input.value = rawText;
   input.spellcheck = false;
+  input.rows = 1;
   cellEl.appendChild(input);
   cellEl.classList.add('editing');
+  autoSizeTextarea(input);
+  input.addEventListener('input', function () { autoSizeTextarea(input); });
   input.focus();
   input.select();
 
