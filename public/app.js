@@ -94,6 +94,8 @@ async function renderMarkdown(targetEl, markdown) {
     await mermaid.run({ nodes: mermaidEls });
   }
   buildToc(targetEl);
+  var exportBtn = document.getElementById('export-pdf-btn');
+  if (exportBtn) exportBtn.classList.remove('hidden');
 }
 
 // Tokenize markdown and wrap each non-space top-level block in a div
@@ -269,6 +271,7 @@ async function init() {
   initSidebarResize();
   initSidebarToggle();
   initTocToggle();
+  initExportPdf();
 
   document.getElementById('change-folder-btn').addEventListener('click', pickAndLoadFolder);
 
@@ -1764,6 +1767,25 @@ function buildToc(articleEl) {
     if (toggle) toggle.classList.add('active');
     initTocScrollSpy();
   }
+}
+
+function initExportPdf() {
+  var btn = document.getElementById('export-pdf-btn');
+  if (!btn) return;
+  btn.addEventListener('click', exportToPdf);
+}
+
+function exportToPdf() {
+  if (!currentFilePath) return;
+  // The PDF filename in most browsers comes from document.title.
+  var prevTitle = document.title;
+  var base = currentFilePath.split('/').pop().replace(/\.md$/i, '');
+  document.title = base;
+  // Wait a tick so the title update lands before the print dialog opens.
+  setTimeout(function () {
+    window.print();
+    setTimeout(function () { document.title = prevTitle; }, 300);
+  }, 30);
 }
 
 function initTocToggle() {
