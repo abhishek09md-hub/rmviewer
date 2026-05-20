@@ -76,30 +76,26 @@ function getMermaidConfig() {
 }
 mermaid.initialize(getMermaidConfig());
 
-async function reRenderMermaid(mermaidConfigOverride) {
-  if (!currentMarkdown || currentMarkdown.indexOf('```mermaid') === -1) return;
-  var body = document.getElementById('markdown-body');
-  if (!body) return;
-  await renderMarkdown(body, currentMarkdown, mermaidConfigOverride);
+async function reRenderMermaid() {
+  var contentEl = document.getElementById('content');
+  if (!contentEl || !currentMarkdown) return;
+  var mermaidEls = contentEl.querySelectorAll('pre.mermaid');
+  if (mermaidEls.length === 0) return;
+  // Re-render the full markdown to get fresh mermaid elements
+  await renderMarkdown(contentEl, currentMarkdown);
 }
 
-async function renderMarkdown(targetEl, markdown, mermaidConfigOverride) {
+async function renderMarkdown(targetEl, markdown) {
   targetEl.innerHTML = renderTokensToHtml(markdown);
   // Render any mermaid diagrams
   var mermaidEls = targetEl.querySelectorAll('pre.mermaid');
   if (mermaidEls.length > 0) {
-    mermaid.initialize(mermaidConfigOverride || getMermaidConfig());
+    mermaid.initialize(getMermaidConfig());
     await mermaid.run({ nodes: mermaidEls });
   }
   buildToc(targetEl);
   var exportBtn = document.getElementById('export-pdf-btn');
   if (exportBtn) exportBtn.classList.remove('hidden');
-}
-
-// Mermaid config that ignores the current theme — used for PDF export so
-// dark-mode diagrams don't print with dark backgrounds.
-function getLightMermaidConfig() {
-  return { startOnLoad: false, theme: 'default', themeVariables: { fontFamily: 'inherit' } };
 }
 
 // Tokenize markdown and wrap each non-space top-level block in a div
@@ -1779,42 +1775,17 @@ function initExportPdf() {
   btn.addEventListener('click', exportToPdf);
 }
 
-async function exportToPdf() {
+function exportToPdf() {
   if (!currentFilePath) return;
-
-  // Commit any open editor first so the printed content is up to date.
-  if (currentEditor && currentEditor.commit) {
-    var ed = currentEditor;
-    currentEditor = null;
-    try { await ed.commit(); } catch (e) { /* ignore */ }
-  }
-
+  // The PDF filename in most browsers comes from document.title.
   var prevTitle = document.title;
   var base = currentFilePath.split('/').pop().replace(/\.md$/i, '');
   document.title = base;
-
-  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  var hasMermaid = currentMarkdown && currentMarkdown.indexOf('```mermaid') !== -1;
-  var swappedMermaid = false;
-
-  function onAfterPrint() {
-    document.title = prevTitle;
-    if (swappedMermaid) {
-      // Re-render mermaid with the user's current theme.
-      reRenderMermaid();
-    }
-    window.removeEventListener('afterprint', onAfterPrint);
-  }
-  window.addEventListener('afterprint', onAfterPrint);
-
-  if (isDark && hasMermaid) {
-    // Switch mermaid to light theme for print so dark diagrams don't
-    // print with dark backgrounds.
-    swappedMermaid = true;
-    await reRenderMermaid(getLightMermaidConfig());
-  }
-
-  window.print();
+  // Wait a tick so the title update lands before the print dialog opens.
+  setTimeout(function () {
+    window.print();
+    setTimeout(function () { document.title = prevTitle; }, 300);
+  }, 30);
 }
 
 function initTocToggle() {
