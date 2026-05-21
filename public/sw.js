@@ -1,10 +1,11 @@
-const CACHE_VERSION = 'v16';
+const CACHE_VERSION = 'v17';
 const CACHE_NAME = 'readme-viewer-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
   './',
   './index.html',
-  './landing.html',
+  './about/',
+  './about/index.html',
   './style.css',
   './app.js',
   './lib/marked.min.js',
@@ -39,10 +40,12 @@ self.addEventListener('fetch', (event) => {
 
   // Navigation requests: serve the app shell so deep links like /foo.md
   // load index.html, then resolveFileFromUrl picks the file.
-  // Exception: explicit .html pages (e.g. /landing.html) are served as-is.
+  // Exception: explicit .html pages and the /about/ landing route are
+  // served as-is.
   if (req.mode === 'navigate') {
     const isExplicitHtml = /\.html$/i.test(url.pathname) && !/\/index\.html$/i.test(url.pathname);
-    if (isExplicitHtml) {
+    const isAboutRoute = /\/about\/?$/.test(url.pathname);
+    if (isExplicitHtml || isAboutRoute) {
       event.respondWith(
         caches.match(req).then((cached) => {
           const network = fetch(req).then((resp) => {
