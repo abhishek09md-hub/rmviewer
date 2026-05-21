@@ -31,6 +31,10 @@
   --bg-active: #ecfdf5;
   --blockquote-bg: #f0fdf8;
   --table-hover: #ecfdf5;
+
+  /* Text color that reads on an accent-coloured fill.
+     White on the dark light-mode accents; dark on the lighter dark-mode accents. */
+  --accent-contrast: #ffffff;
 }
 
 /* ========== Accent: Teal ========== */
@@ -106,6 +110,9 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.25);
   --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.3);
+  /* Dark-mode accents are intentionally lighter for pop against the dark UI;
+     pair them with dark text instead of white for legibility. */
+  --accent-contrast: #0d1117;
 }
 
 /* Dark mode accent overrides */
@@ -312,7 +319,7 @@ body {
   height: 32px;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   border-radius: var(--radius-sm);
-  color: white;
+  color: var(--accent-contrast);
   flex-shrink: 0;
 }
 
@@ -924,7 +931,7 @@ body {
   font-weight: 600;
   font-family: inherit;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -1216,7 +1223,7 @@ body {
 
 .scroll-btn:hover {
   background: var(--accent);
-  color: white;
+  color: var(--accent-contrast);
   border-color: var(--accent);
   transform: translateY(-2px);
   box-shadow: var(--shadow-lg);

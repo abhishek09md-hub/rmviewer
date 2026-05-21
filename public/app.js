@@ -319,7 +319,7 @@ function showReopenPrompt(handle) {
     '<p>Reopen <strong>' + escapeHtml(name) + '</strong>?</p>' +
     '<span>Browsers require a click to re-grant access to a previously picked folder.</span>' +
     '<button id="reopen-folder-btn" class="primary-btn">Reopen Folder</button>' +
-    '<button id="pick-different-btn" class="primary-btn" style="margin-top:8px;background:transparent;color:inherit;border:1px solid currentColor;">Choose Different Folder</button>' +
+    '<button id="pick-different-btn" class="primary-btn" style="margin-top:8px;background:transparent;color:var(--text-secondary);border:1px solid currentColor;">Choose Different Folder</button>' +
     '</div>';
   document.getElementById('reopen-folder-btn').addEventListener('click', async function () {
     try {
