@@ -1,10 +1,11 @@
-const CACHE_VERSION = 'v14';
+const CACHE_VERSION = 'v15';
 const CACHE_NAME = 'readme-viewer-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
   './',
   './index.html',
-  './landing.html',
+  './about/',
+  './about/index.html',
   './style.css',
   './app.js',
   './lib/marked.min.js',
@@ -37,38 +38,34 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // Navigation requests: serve the app shell so deep links like /foo.md
-  // load index.html, then resolveFileFromUrl picks the file.
-  // Exception: explicit .html pages (e.g. /landing.html) are served as-is.
+  // Navigation requests: try the exact URL (covers known routes like /
+  // and /about/), then fall back to the app shell so deep links like
+  // /foo.md route through index.html → resolveFileFromUrl picks the file.
   if (req.mode === 'navigate') {
-    const isExplicitHtml = /\.html$/i.test(url.pathname) && !/\/index\.html$/i.test(url.pathname);
-    if (isExplicitHtml) {
-      event.respondWith(
-        caches.match(req).then((cached) => {
-          const network = fetch(req).then((resp) => {
-            if (resp && resp.ok) {
-              const copy = resp.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-            }
-            return resp;
-          }).catch(() => cached);
-          return cached || network;
-        })
-      );
-      return;
-    }
-    event.respondWith(
-      caches.match('./index.html').then((cached) => {
-        const network = fetch('./index.html').then((resp) => {
-          if (resp && resp.ok) {
+    event.respondWith((async () => {
+      // 1. Cache match for the exact URL.
+      const cached = await caches.match(req, { ignoreSearch: true });
+      if (cached) return cached;
+      // 2. Network for the exact URL — known routes (like /about/) are
+      //    served by the origin server, then cached for next time.
+      try {
+        const resp = await fetch(req);
+        if (resp && resp.ok) {
+          const url = new URL(req.url);
+          const isHtmlNav = resp.headers.get('content-type') &&
+            resp.headers.get('content-type').includes('text/html');
+          // Only cache navigations that look like real HTML pages, not the
+          // SPA-shell fallback the origin server might return for unknown paths.
+          if (isHtmlNav && (url.pathname === '/' || url.pathname.endsWith('/') || url.pathname.endsWith('.html'))) {
             const copy = resp.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', copy));
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           }
           return resp;
-        }).catch(() => cached);
-        return cached || network;
-      })
-    );
+        }
+      } catch (e) { /* offline — fall through */ }
+      // 3. App shell fallback for SPA-style deep links.
+      return (await caches.match('./index.html')) || fetch('./index.html');
+    })());
     return;
   }
 
