@@ -820,6 +820,29 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* =====================================================================
+   Desktop-only notice + Launch button label swap
+   ===================================================================== */
+
+.desktop-only-banner {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 11px 18px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: center;
+  position: relative;
+  z-index: 100;
+}
+.desktop-only-banner svg { flex-shrink: 0; opacity: 0.9; }
+
+.launch-btn .lbl-mobile { display: none; }
+
+/* =====================================================================
    Animations
    ===================================================================== */
 
@@ -857,16 +880,118 @@ a { color: inherit; text-decoration: none; }
   .hero-stats .stat:nth-child(3) { border-left: none; padding-left: 0; border-top: 1px solid var(--border-subtle); }
   .hero-stats .stat:nth-child(4) { border-top: 1px solid var(--border-subtle); }
 }
+
+/* —— Mobile (≤ 768px): show desktop-only notice + disable Launch CTAs —— */
+@media (max-width: 768px) {
+  .desktop-only-banner { display: flex; }
+
+  .launch-btn {
+    pointer-events: none;
+    cursor: not-allowed;
+    background: var(--bg-tertiary) !important;
+    color: var(--text-muted) !important;
+    border-color: var(--border) !important;
+    box-shadow: none !important;
+    transform: none !important;
+  }
+  .launch-btn .lbl-desktop,
+  .launch-btn svg { display: none; }
+  .launch-btn .lbl-mobile { display: inline; }
+  .launch-btn::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    opacity: 0.5;
+    display: inline-block;
+    margin-right: 2px;
+  }
+}
+
 @media (max-width: 600px) {
-  .wrap { padding: 0 20px; }
-  .mockup-app { grid-template-columns: 1fr; }
-  .mock-sidebar { display: none; }
+  .wrap { padding: 0 22px; }
+  .site-header .inner { padding: 12px 0; }
+  .site-nav { gap: 14px; font-size: 12px; }
   .site-nav a:not(.btn-primary) { display: none; }
-  .hero-title { font-size: clamp(40px, 11vw, 72px); }
+
+  .hero { padding: 44px 0 24px; }
+  .hero-eyebrow { font-size: 10px; padding: 5px 10px 5px 6px; }
+  .hero-title { font-size: clamp(38px, 10vw, 64px); margin-bottom: 24px; }
+  .hero-lede { font-size: 16px; margin-bottom: 32px; }
+  .hero-actions { gap: 12px; }
+  .hero-stats { margin-top: 40px; }
+  .hero-stats .stat { padding: 16px 0; padding-left: 16px; }
+  .hero-stats .stat:first-child { padding-left: 0; }
+  .hero-stats .stat .num { font-size: 20px; }
+  .hero-stats .stat .label { font-size: 9.5px; }
+
+  .mockup-section { padding: 30px 0 60px; }
+  .mockup-app { grid-template-columns: 1fr; min-height: auto; }
+  .mock-sidebar { display: none; }
+  .mockup-titlebar .url { font-size: 9.5px; margin-left: 10px; }
+  .mock-content { padding: 22px 20px; }
+  .mock-content h1 { font-size: 22px; }
+  .mock-content .diagram { padding: 14px 8px; gap: 6px; font-size: 10px; flex-wrap: wrap; }
+  .mock-content .diagram .node { padding: 5px 8px; }
+  .mock-content .saved-toast { right: 14px; bottom: 14px; font-size: 10px; padding: 6px 10px; }
+  .mockup-frame::after {
+    content: 'Desktop preview — actual layout';
+    display: block;
+    text-align: center;
+    margin-top: 18px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .pull-section { padding: 60px 0 40px; gap: 28px; }
+  .features { padding: 50px 0 70px; }
+  .features-header { flex-direction: column; align-items: flex-start; gap: 6px; padding-bottom: 16px; margin-bottom: 36px; }
+  .features-header h2 { font-size: 38px; }
+  .feature-grid { gap: 28px; }
+  .feature h3 { font-size: 20px; }
+  .feature p { font-size: 14.5px; }
+
+  .manifesto { padding: 70px 0; }
+  .manifesto blockquote { font-size: 26px; max-width: 18ch; }
+
+  .final-cta { padding: 80px 0 60px; }
+  .final-cta h2 { font-size: 42px; margin-bottom: 32px; }
+  .final-cta .kicker { font-size: 10px; gap: 8px; }
+  .final-cta .kicker::before, .final-cta .kicker::after { width: 24px; }
+
+  .footer { padding: 22px 0; flex-direction: column; gap: 8px; text-align: center; font-size: 9.5px; }
+}
+
+@media (max-width: 420px) {
+  .hero-title { font-size: 34px; }
+  .hero-lede { font-size: 15px; }
+  .features-header h2 { font-size: 32px; }
+  .manifesto blockquote { font-size: 22px; }
+  .final-cta h2 { font-size: 34px; }
+  .mockup-titlebar .url {
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    flex: 1;
+  }
 }
 </style>
 </head>
 <body>
+
+<!-- Desktop-only notice (shown on mobile) -->
+<div class="desktop-only-banner" role="note">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+    <line x1="8" y1="21" x2="16" y2="21"/>
+    <line x1="12" y1="17" x2="12" y2="21"/>
+  </svg>
+  <span>The viewer runs on desktop browsers only — visit on a computer to try it.</span>
+</div>
 
 <!-- Header -->
 <header class="site-header">
@@ -883,8 +1008,9 @@ a { color: inherit; text-decoration: none; }
     <nav class="site-nav">
       <a href="#features">Features</a>
       <a href="#manifesto">Manifesto</a>
-      <a href="/" class="btn-primary">
-        Launch
+      <a href="/" class="btn-primary launch-btn">
+        <span class="lbl-desktop">Launch</span>
+        <span class="lbl-mobile">Desktop only</span>
         <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <path d="M3 11L11 3M11 3H4.5M11 3v6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -906,8 +1032,9 @@ a { color: inherit; text-decoration: none; }
       get a beautifully typeset library, with search, diagrams, inline editing and zero uploads.
     </p>
     <div class="hero-actions">
-      <a href="/" class="btn-primary btn-large">
-        Open the Viewer
+      <a href="/" class="btn-primary btn-large launch-btn">
+        <span class="lbl-desktop">Open the Viewer</span>
+        <span class="lbl-mobile">Desktop only</span>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
           <path d="M3 11L11 3M11 3H4.5M11 3v6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -1132,8 +1259,9 @@ a { color: inherit; text-decoration: none; }
   <section class="final-cta">
     <div class="kicker">Free · Open · Local-first</div>
     <h2>Open <em>your folder.</em></h2>
-    <a href="/" class="btn-primary btn-large">
-      Launch Readme Viewer
+    <a href="/" class="btn-primary btn-large launch-btn">
+      <span class="lbl-desktop">Launch Readme Viewer</span>
+      <span class="lbl-mobile">Desktop only · Visit on a computer</span>
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
         <path d="M3 11L11 3M11 3H4.5M11 3v6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
